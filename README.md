@@ -6,22 +6,27 @@ If you encounter permission errors like "Error: EACCES: permission denied" durin
 
 **RUN EACH COMMAND-SEPERATED BY COMMENT- SEPARATELY**
 ```bash
-# Log in as the largelingo user
-sudo su - largelingo
-
 # Stop the GitHub Actions runner
 sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
 
-# Reset permissions for the entire _work directory
-sudo rm -rf /home/largelingo/actions-runner/_work/inference
-sudo rm -rf /home/largelingo/actions-runner/_work/apigateway
-sudo rm -rf /home/largelingo/actions-runner/_work/authentication
-sudo mkdir -p /home/largelingo/actions-runner/_work/inference
-sudo mkdir -p /home/largelingo/actions-runner/_work/apigateway
-sudo mkdir -p /home/largelingo/actions-runner/_work/authentication
-sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/inference
-sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/apigateway
-sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/authentication
+# Completely reset the _work directory with wide-open permissions
+sudo rm -rf /home/largelingo/actions-runner/_work
+sudo mkdir -p /home/largelingo/actions-runner/_work
+sudo chmod -R 777 /home/largelingo/actions-runner/_work
+sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work
+
+# Reset permissions on the service directories too
+sudo rm -rf /home/largelingo/largelingo_services/*/logs
+sudo mkdir -p /home/largelingo/largelingo_services/authentication/logs
+sudo mkdir -p /home/largelingo/largelingo_services/apigateway/logs
+sudo mkdir -p /home/largelingo/largelingo_services/inference/logs
+
+# Set very permissive permissions on all service directories
+sudo chmod -R 777 /home/largelingo/largelingo_services
+sudo chown -R largelingo:largelingo /home/largelingo/largelingo_services
+
+# Protect .env files though
+sudo find /home/largelingo/largelingo_services -name ".env" -exec chmod 600 {} \;
 
 # Restart the GitHub Actions runner
 sudo systemctl start actions.runner.LargeLingo.xpsserver.service
