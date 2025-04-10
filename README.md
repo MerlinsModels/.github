@@ -10,9 +10,15 @@ sudo su - largelingo
 sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
 
 # Reset permissions for the entire _work directory
-sudo rm -rf /home/largelingo/actions-runner/_work/*
-sudo mkdir -p /home/largelingo/actions-runner/_work
-sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/
+sudo rm -rf /home/largelingo/actions-runner/_work/inference
+sudo rm -rf /home/largelingo/actions-runner/_work/apigateway
+sudo rm -rf /home/largelingo/actions-runner/_work/authentication
+sudo mkdir -p /home/largelingo/actions-runner/_work/inference
+sudo mkdir -p /home/largelingo/actions-runner/_work/apigateway
+sudo mkdir -p /home/largelingo/actions-runner/_work/authentication
+sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/inference
+sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/apigateway
+sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/authentication
 
 # Restart the GitHub Actions runner
 sudo systemctl start actions.runner.LargeLingo.xpsserver.service
