@@ -2,6 +2,8 @@
 
 
 If you encounter permission errors like "Error: EACCES: permission denied" during GitHub Actions workflows, use these commands to reset permissions:
+
+
 **RUN EACH COMMAND-SEPERATED BY COMMENT- SEPARATELY**
 ```bash
 # Log in as the largelingo user
