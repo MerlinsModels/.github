@@ -24,8 +24,8 @@ This document outlines the steps needed to add a new service to our GitHub Actio
 
    ```bash
    # Create and configure workspace directory
-   sudo rm -rf /home/largelingo/actions-runner/_work/[service-name]
-   sudo mkdir -p /home/largelingo/actions-runner/_work/[service-name]
+   sudo rm -rf /home/largelingo/actions-runner/_work/[new-service-name]
+   sudo mkdir -p /home/largelingo/actions-runner/_work/[new-service-name]
    sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/
    ```
 
