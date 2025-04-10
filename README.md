@@ -16,7 +16,7 @@ sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/
 
 # Restart the GitHub Actions runner
 sudo systemctl start actions.runner.LargeLingo.xpsserver.service
-
+```
 # Adding a New Service to the Deployment Pipeline
 
 This document outlines the steps needed to add a new service to our GitHub Actions deployment pipeline.
