@@ -1,3 +1,22 @@
+## Fixing GitHub Actions Runner Permission Errors
+
+If you encounter permission errors like "Error: EACCES: permission denied" during GitHub Actions workflows, use these commands to reset permissions:
+
+```bash
+# Log in as the largelingo user
+sudo su - largelingo
+
+# Stop the GitHub Actions runner
+sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
+
+# Reset permissions for the entire _work directory
+sudo rm -rf /home/largelingo/actions-runner/_work/*
+sudo mkdir -p /home/largelingo/actions-runner/_work
+sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/
+
+# Restart the GitHub Actions runner
+sudo systemctl start actions.runner.LargeLingo.xpsserver.service
+
 # Adding a New Service to the Deployment Pipeline
 
 This document outlines the steps needed to add a new service to our GitHub Actions deployment pipeline.
