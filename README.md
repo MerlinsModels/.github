@@ -234,3 +234,200 @@ chmod -R 777 /home/largelingo/largelingo_services/[service-name]/logs
 - The Docker Compose file should use the `largelingo-network` with `external: true`
 - Each service repository should have its own `.github/workflows/deploy.yml` file
 - Service communication within Docker happens using service names as hostnames
+
+
+# AI Chat App Deployment Setup
+
+## Overview
+
+This document outlines the steps taken to deploy an AI Chat application with a Next.js frontend, API Gateway, and Inference service using Cloudflare for DNS and proxying.
+
+## Architecture
+
+- **Frontend**: Next.js application running on port 3000
+- **API Gateway**: FastAPI service running on port 8000
+- **Inference Service**: AI model service for text generation
+- **Nginx**: Used as a reverse proxy to route traffic between services
+- **Cloudflare**: Provides DNS, CDN, and Cloudflare Tunnels for secure access
+
+## Setup Steps
+
+### 1. Domain Registration and DNS Configuration
+
+1. Registered the domain `bartstolarek.com` on Namecheap
+2. Set up Cloudflare account and added the domain to Cloudflare
+3. Updated nameservers on Namecheap to point to Cloudflare's nameservers
+4. Configured DNS records in Cloudflare:
+   - Added an A record for the root domain pointing to the server IP
+   - Added a CNAME record for www pointing to the root domain
+
+### 2. Cloudflare Tunnel Setup
+
+1. Set up Cloudflare Tunnel (`bart-tunnel`) to securely connect the server to Cloudflare's network
+2. The tunnel has ID: `7c1b8cd7-9b0f-4b3b-aaac-c808e23d0376`
+3. Added a CNAME record pointing to the tunnel's address (`7c1b8cd7-9b0f-4b3b-aaac-c808e23d0376.cfargotunnel.com`)
+4. Created a local configuration file for the tunnel
+
+### 3. Server Setup on XPS Server
+
+1. Running Debian 12 on XPS 13 9350 with Intel i5-6200U and 8GB RAM
+2. Deployed services using Docker:
+   - Frontend container on port 3000
+   - API Gateway container on port 8000
+   - Inference service as needed
+
+### 4. Nginx Configuration
+
+1. Installed Nginx: `sudo apt install nginx`
+2. Disabled Apache (which was previously installed): `sudo systemctl stop apache2 && sudo systemctl disable apache2`
+3. Created Nginx configuration directories:
+   ```bash
+   sudo mkdir -p /etc/nginx/sites-available
+   sudo mkdir -p /etc/nginx/sites-enabled
+   sudo mkdir -p /var/log/nginx
+   ```
+4. Created the main Nginx configuration file at `/etc/nginx/nginx.conf`:
+   ```nginx
+   user www-data;
+   worker_processes auto;
+   pid /run/nginx.pid;
+
+   events {
+       worker_connections 768;
+   }
+
+   http {
+       sendfile on;
+       tcp_nopush on;
+       types_hash_max_size 2048;
+       include /etc/nginx/mime.types;
+       default_type application/octet-stream;
+       
+       access_log /var/log/nginx/access.log;
+       error_log /var/log/nginx/error.log;
+       
+       include /etc/nginx/conf.d/*.conf;
+       include /etc/nginx/sites-enabled/*;
+   }
+   ```
+
+5. Created a site configuration at `/etc/nginx/sites-available/default`:
+   ```nginx
+   server {
+       listen 80 default_server;
+       listen [::]:80 default_server;
+       
+       server_name _;
+       
+       # Frontend Next.js application
+       location / {
+           proxy_pass http://localhost:3000;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection 'upgrade';
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+       
+       # API Gateway service
+       location /api/ {
+           proxy_pass http://localhost:8000/api/;
+           proxy_http_version 1.1;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           
+           # Extended timeout for AI model inference
+           proxy_read_timeout 300s;
+           proxy_connect_timeout 300s;
+           proxy_send_timeout 300s;
+       }
+   }
+   ```
+
+6. Enabled the site with a symbolic link:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/
+   ```
+
+7. Started and enabled Nginx:
+   ```bash
+   sudo systemctl start nginx
+   sudo systemctl enable nginx
+   ```
+
+### 5. Cloudflare Configuration
+
+1. Set up a Page Rule for API paths to bypass cache:
+   - URL pattern: `*bartstolarek.com/api/*`
+   - Cache Level: Bypass
+
+2. Added appropriate SSL/TLS settings in Cloudflare:
+   - Set SSL/TLS encryption mode to "Full"
+   - Enabled "Always Use HTTPS"
+
+### 6. Frontend Configuration
+
+1. Updated the Next.js application to use relative URLs for API calls:
+   ```javascript
+   // Changed from absolute URLs:
+   // const response = await fetch(`${apiUrl}/api/v1/inference/infer`, {...});
+   
+   // To relative URLs:
+   const response = await fetch(`/api/v1/inference/infer`, {...});
+   ```
+
+2. Environment variables setup:
+   - Production: No need to set `NEXT_PUBLIC_API_URL` (using relative URLs)
+   - Development: Set `NEXT_PUBLIC_API_URL` to point to API Gateway (e.g., `http://localhost:8000`)
+
+### 7. API Gateway Configuration
+
+1. Added CORS middleware to allow cross-origin requests:
+   ```python
+   app.add_middleware(
+       CORSMiddleware,
+       allow_origins=["*"],  # Restrict this in production
+       allow_credentials=True,
+       allow_methods=["*"],
+       allow_headers=["*"],
+   )
+   ```
+
+### 8. Troubleshooting
+
+1. Identified and resolved a timeout issue with Cloudflare for long-running inference requests
+2. Added appropriate headers and routing in Nginx for both frontend and API requests
+3. Ensured Docker containers exposed the correct ports
+4. Disabled Apache which was conflicting with Nginx
+
+## Challenges and Solutions
+
+### Cloudflare Timeout Issues
+
+- **Problem**: Cloudflare has a 100-second timeout limit for requests on non-Enterprise plans, causing 524 errors for long-running inference operations.
+- **Solution options**:
+  1. Implement a job queue system in the API Gateway
+  2. Use streaming responses
+  3. Optimize inference to complete faster
+
+### DNS and Routing
+
+- **Problem**: Configuring proper DNS records to work with Cloudflare Tunnels.
+- **Solution**: Used a CNAME record for www subdomain pointing to the main domain, and configured the tunnel to route traffic to Nginx.
+
+### Secure Connections
+
+- **Problem**: Setting up SSL/TLS with Cloudflare and Nginx.
+- **Solution**: Used Cloudflare's Full SSL mode, letting Cloudflare handle the certificates while traffic between Cloudflare and the origin remained encrypted via the tunnel.
+
+## Future Improvements
+
+1. Implement a job queue system for handling long-running inference requests
+2. Set up monitoring for the services
+3. Add deployment automation
+4. Implement caching for common requests
+5. Set up automatic backups
