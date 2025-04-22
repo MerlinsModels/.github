@@ -1,3 +1,12 @@
+
+# Testing stufff
+
+To test:
+`pytest`
+
+To test with coverage, install extension Coverage Gutters, set in the command pallete the setting to watch and run
+`pytest --cov=app --cov-report=xml`
+
 # Fixing GitHub Actions Runner Permission Errors
 
 
