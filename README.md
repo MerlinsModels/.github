@@ -1,504 +1,80 @@
+# Munera Backend API Deployment Documentation
 
-# Testing stufff
+## Project Overview
 
-To test:
-`pytest`
-
-To test with coverage, install extension Coverage Gutters, set in the command pallete the setting to watch and run
-`pytest --cov=app --cov-report=xml`
-
-# Fixing GitHub Actions Runner Permission Errors
-
-
-If you encounter permission errors like "Error: EACCES: permission denied" during GitHub Actions workflows, use these commands to reset permissions:
-
-
-**RUN EACH COMMAND-SEPERATED BY COMMENT- SEPARATELY**
-```bash
-# Stop the GitHub Actions runner
-sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
-
-# Completely reset the _work directory with wide-open permissions
-sudo rm -rf /home/largelingo/actions-runner/_work
-sudo mkdir -p /home/largelingo/actions-runner/_work
-sudo chmod -R 777 /home/largelingo/actions-runner/_work
-sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work
-
-# Reset permissions on the service directories too
-sudo rm -rf /home/largelingo/largelingo_services/*/logs
-sudo mkdir -p /home/largelingo/largelingo_services/authentication/logs
-sudo mkdir -p /home/largelingo/largelingo_services/apigateway/logs
-sudo mkdir -p /home/largelingo/largelingo_services/inference/logs
-
-# Set very permissive permissions on all service directories
-sudo chmod -R 777 /home/largelingo/largelingo_services
-sudo chown -R largelingo:largelingo /home/largelingo/largelingo_services
-
-# Protect .env files though
-sudo find /home/largelingo/largelingo_services -name ".env" -exec chmod 600 {} \;
-
-# Restart the GitHub Actions runner
-sudo systemctl start actions.runner.LargeLingo.xpsserver.service
-```
-# Permission update
-
-```
-sudo chown -R 1001:1001 /home/largelingo/
-```
-
-
-# Adding a New Service to the Deployment Pipeline
-
-This document outlines the steps needed to add a new service to our GitHub Actions deployment pipeline.
-
-## Prerequisites
-
-- Debian-based server with sudo access
-- GitHub Actions runner already configured
-- Docker and Docker Compose installed
-- Working largelingo user with sudo permissions
-
-## Step-by-Step Process
-
-1. **Stop the GitHub Actions runner**
-
-   ```bash
-   sudo su - largelingo
-   sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
-   ```
-
-2. **Set up workspace directories for the new service**
-
-   Replace `[new-service-name]` with your service name (e.g., "userservice"):
-
-   ```bash
-   # Create and configure workspace directory
-   sudo rm -rf /home/largelingo/actions-runner/_work/[new-service-name]
-   sudo mkdir -p /home/largelingo/actions-runner/_work/[new-service-name]
-   sudo chown -R largelingo:largelingo /home/largelingo/actions-runner/_work/
-   ```
-
-3. **Create service directory and initial environment file**
-
-   ```bash
-   # Create service directory 
-   mkdir -p ~/largelingo_services/[new-service-name]
-   
-   # Create logs directory with proper permissions
-   mkdir -p ~/largelingo_services/[new-service-name]/logs
-   chmod -R 777 ~/largelingo_services/[new-service-name]/logs
-   
-   # Create initial .env file (customize as needed for your service)
-   cat > ~/largelingo_services/[new-service-name]/.env << EOF
-   PROJECT_NAME=[new-service-name]
-   VERSION=1.0.0
-   ENV=production
-   SECRET_KEY=your_secure_production_key
-   LOG_LEVEL=info
-   # Add any additional environment variables your service needs
-   EOF
-   
-   # Set appropriate permissions
-   chmod 600 ~/largelingo_services/[new-service-name]/.env
-   ```
-
-4. **Ensure Docker network exists**
-
-   ```bash
-   docker network create largelingo-network 2>/dev/null || true
-   ```
-
-5. **Restart the GitHub Actions runner**
-
-   ```bash
-   sudo systemctl start actions.runner.LargeLingo.xpsserver.service
-   ```
-
-## Creating the GitHub Actions Workflow File
-
-Create a `.github/workflows/deploy.yml` file in your new service repository:
-
-```yaml
-name: Test and Deploy [New Service Name]
-
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  test:
-    runs-on: self-hosted
-    container:
-      image: python:3.10-slim
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Create .env for Pytest
-        run: |
-          echo "PROJECT_NAME=[new-service-name]" >> .env
-          # Add other environment variables needed for testing
-          
-      - name: Run Pytest
-        run: pytest
-
-  deploy:
-    needs: test
-    runs-on: self-hosted
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Sync repository to production directory
-        run: |
-          # Get service name from GitHub repository
-          SERVICE_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
-          
-          # Backup existing .env file
-          if [ -f "/home/largelingo/largelingo_services/$SERVICE_NAME/.env" ]; then
-            cp /home/largelingo/largelingo_services/$SERVICE_NAME/.env /tmp/${SERVICE_NAME}.env.bak
-          fi
-          
-          # Ensure logs directory exists with proper permissions
-          mkdir -p /home/largelingo/largelingo_services/$SERVICE_NAME/logs
-          chmod -R 777 /home/largelingo/largelingo_services/$SERVICE_NAME/logs
-          
-          # Sync files excluding .env and logs
-          rsync -av --delete --exclude='.env' --exclude='logs/' "$GITHUB_WORKSPACE/" "/home/largelingo/largelingo_services/$SERVICE_NAME/"
-          
-          # Restore .env from backup
-          if [ -f "/tmp/${SERVICE_NAME}.env.bak" ]; then
-            cp /tmp/${SERVICE_NAME}.env.bak /home/largelingo/largelingo_services/$SERVICE_NAME/.env
-            rm /tmp/${SERVICE_NAME}.env.bak
-          fi
-          
-      - name: Deploy Code (Docker Compose)
-        run: |
-          SERVICE_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
-          cd /home/largelingo/largelingo_services/$SERVICE_NAME
-          docker compose up -d --build
-```
-
-## Docker Compose Template
-
-Ensure your Docker Compose file uses the shared network:
-
-```yaml
-version: '3.8'
-
-services:
-  [service-name]:
-    build: .
-    container_name: largelingo-[service-name]
-    ports:
-      - "[port]:[container-port]"  # Adjust as needed
-    env_file:
-      - .env
-    volumes:
-      - ./logs:/app/logs
-      - ./app:/app/app  # For hot reloading
-    networks:
-      - largelingo-network
-    restart: unless-stopped
-    
-    # Add any other service-specific configuration here
-
-networks:
-  largelingo-network:
-    external: true
-```
-
-## Troubleshooting
-
-If you encounter permission issues after setup:
-
-```bash
-sudo su - largelingo
-sudo systemctl stop actions.runner.LargeLingo.xpsserver.service
-sudo rm -rf ~/actions-runner/_work/[service-name]
-sudo mkdir -p ~/actions-runner/_work/[service-name]
-sudo chown -R largelingo:largelingo ~/actions-runner/_work/
-sudo systemctl start actions.runner.LargeLingo.xpsserver.service
-```
-
-For log file permission issues:
-
-```bash
-sudo rm -rf /home/largelingo/largelingo_services/[service-name]/logs
-mkdir -p /home/largelingo/largelingo_services/[service-name]/logs
-chmod -R 777 /home/largelingo/largelingo_services/[service-name]/logs
-```
-
-## Important Notes
-
-- Always ensure the Docker network exists before deploying services that need to communicate with each other
-- Keep .env files secure with appropriate permissions (600)
-- Make logs directories writable by all users (777) to prevent permission issues
-- The Docker Compose file should use the `largelingo-network` with `external: true`
-- Each service repository should have its own `.github/workflows/deploy.yml` file
-- Service communication within Docker happens using service names as hostnames
-
-
-# AI Chat App Deployment Setup
-
-## Overview
-
-This document outlines the steps taken to deploy an AI Chat application with a Next.js frontend, API Gateway, and Inference service using Cloudflare for DNS and proxying.
+Munera is a fitness tracking application integrated with Strava, deployed across staging and production environments using Cloudflare Tunnels for secure API exposure.
 
 ## Architecture
 
-- **Frontend**: Next.js application running on port 3000
-- **API Gateway**: FastAPI service running on port 8000
-- **Inference Service**: AI model service for text generation
-- **Nginx**: Used as a reverse proxy to route traffic between services
-- **Cloudflare**: Provides DNS, CDN, and Cloudflare Tunnels for secure access
+### Environment Overview
 
-## Setup Steps
+| Environment | Server | Frontend URL | API URL | Frontend Port | Backend Port | Tunnel ID |
+|------------|--------|--------------|---------|---------------|--------------|-----------|
+| **Staging** | XPS Server | https://staging.munera.app | https://staging-api.munera.app | 3010 | 8010 | eeec6f03-16cf-421d-a885-02d5071469fc |
+| **Production** | Auros Server | https://munera.app | https://api.munera.app | 3010 | 8000 | 7800be99-6cfa-4025-958a-80a6f32e7aa6 |
 
-### 1. Domain Registration and DNS Configuration
+## DNS Configuration
 
-1. Registered the domain `bartstolarek.com` on Namecheap
-2. Set up Cloudflare account and added the domain to Cloudflare
-3. Updated nameservers on Namecheap to point to Cloudflare's nameservers
-4. Configured DNS records in Cloudflare:
-   - Added an A record for the root domain pointing to the server IP
-   - Added a CNAME record for www pointing to the root domain
+### Domain Provider
+- **Registrar**: IONOS
+- **DNS Provider**: Cloudflare
+- **Nameservers**: 
+  - keira.ns.cloudflare.com
+  - ryan.ns.cloudflare.com
 
-### 2. Cloudflare Tunnel Setup
+### DNS Records
 
-1. Set up Cloudflare Tunnel (`bart-tunnel`) to securely connect the server to Cloudflare's network
-2. The tunnel has ID: `7c1b8cd7-9b0f-4b3b-aaac-c808e23d0376`
-3. Added a CNAME record pointing to the tunnel's address (`7c1b8cd7-9b0f-4b3b-aaac-c808e23d0376.cfargotunnel.com`)
-4. Created a local configuration file for the tunnel
+| Type | Name | Target | Proxied | Environment |
+|------|------|--------|---------|-------------|
+| CNAME | @ (munera.app) | 7800be99-6cfa-4025-958a-80a6f32e7aa6.cfargotunnel.com | ✅ | Production |
+| CNAME | api | 7800be99-6cfa-4025-958a-80a6f32e7aa6.cfargotunnel.com | ✅ | Production |
+| CNAME | staging | eeec6f03-16cf-421d-a885-02d5071469fc.cfargotunnel.com | ✅ | Staging |
+| CNAME | staging-api | eeec6f03-16cf-421d-a885-02d5071469fc.cfargotunnel.com | ✅ | Staging |
 
-### 3. Server Setup on XPS Server
+## SSL Certificates
 
-1. Running Debian 12 on XPS 13 9350 with Intel i5-6200U and 8GB RAM
-2. Deployed services using Docker:
-   - Frontend container on port 3000
-   - API Gateway container on port 8000
-   - Inference service as needed
+### Cloudflare Origin Certificates
+- **Provider**: Cloudflare Origin Certificates
+- **Validity**: 15 years
+- **Certificate Path**: `/etc/ssl/cloudflare/munera.app.pem`
+- **Private Key Path**: `/etc/ssl/cloudflare/munera.app.key`
+- **Permissions**: 
+  - Certificate: 644
+  - Private Key: 600
 
-### 4. Nginx Configuration
+### Certificate Coverage
+The wildcard certificate covers:
+- `*.munera.app`
+- `*.staging.munera.app`
+- `munera.app`
+- `staging.munera.app`
+- `staging-api.munera.app` (covered by *.munera.app)
+- `api.munera.app` (covered by *.munera.app)
 
-1. Installed Nginx: `sudo apt install nginx`
-2. Disabled Apache (which was previously installed): `sudo systemctl stop apache2 && sudo systemctl disable apache2`
-3. Created Nginx configuration directories:
-   ```bash
-   sudo mkdir -p /etc/nginx/sites-available
-   sudo mkdir -p /etc/nginx/sites-enabled
-   sudo mkdir -p /var/log/nginx
-   ```
-4. Created the main Nginx configuration file at `/etc/nginx/nginx.conf`:
-   ```nginx
-   user www-data;
-   worker_processes auto;
-   pid /run/nginx.pid;
+## Nginx Configuration
 
-   events {
-       worker_connections 768;
-   }
+### Staging Server (XPS Server)
 
-   http {
-       sendfile on;
-       tcp_nopush on;
-       types_hash_max_size 2048;
-       include /etc/nginx/mime.types;
-       default_type application/octet-stream;
-       
-       access_log /var/log/nginx/access.log;
-       error_log /var/log/nginx/error.log;
-       
-       include /etc/nginx/conf.d/*.conf;
-       include /etc/nginx/sites-enabled/*;
-   }
-   ```
-
-5. Created a site configuration at `/etc/nginx/sites-available/default`:
-   ```nginx
-   server {
-       listen 80 default_server;
-       listen [::]:80 default_server;
-       
-       server_name _;
-       
-       # Frontend Next.js application
-       location / {
-           proxy_pass http://localhost:3000;
-           proxy_http_version 1.1;
-           proxy_set_header Upgrade $http_upgrade;
-           proxy_set_header Connection 'upgrade';
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-       }
-       
-       # API Gateway service
-       location /api/ {
-           proxy_pass http://localhost:8000/api/;
-           proxy_http_version 1.1;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-           
-           # Extended timeout for AI model inference
-           proxy_read_timeout 300s;
-           proxy_connect_timeout 300s;
-           proxy_send_timeout 300s;
-       }
-   }
-   ```
-
-6. Enabled the site with a symbolic link:
-   ```bash
-   sudo ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/
-   ```
-
-7. Started and enabled Nginx:
-   ```bash
-   sudo systemctl start nginx
-   sudo systemctl enable nginx
-   ```
-
-### 5. Cloudflare Configuration
-
-1. Set up a Page Rule for API paths to bypass cache:
-   - URL pattern: `*bartstolarek.com/api/*`
-   - Cache Level: Bypass
-
-2. Added appropriate SSL/TLS settings in Cloudflare:
-   - Set SSL/TLS encryption mode to "Full"
-   - Enabled "Always Use HTTPS"
-
-### 6. Frontend Configuration
-
-1. Updated the Next.js application to use relative URLs for API calls:
-   ```javascript
-   // Changed from absolute URLs:
-   // const response = await fetch(`${apiUrl}/api/v1/inference/infer`, {...});
-   
-   // To relative URLs:
-   const response = await fetch(`/api/v1/inference/infer`, {...});
-   ```
-
-2. Environment variables setup:
-   - Production: No need to set `NEXT_PUBLIC_API_URL` (using relative URLs)
-   - Development: Set `NEXT_PUBLIC_API_URL` to point to API Gateway (e.g., `http://localhost:8000`)
-
-### 7. API Gateway Configuration
-
-1. Added CORS middleware to allow cross-origin requests:
-   ```python
-   app.add_middleware(
-       CORSMiddleware,
-       allow_origins=["*"],  # Restrict this in production
-       allow_credentials=True,
-       allow_methods=["*"],
-       allow_headers=["*"],
-   )
-   ```
-
-### 8. Troubleshooting
-
-1. Identified and resolved a timeout issue with Cloudflare for long-running inference requests
-2. Added appropriate headers and routing in Nginx for both frontend and API requests
-3. Ensured Docker containers exposed the correct ports
-4. Disabled Apache which was conflicting with Nginx
-
-## Challenges and Solutions
-
-### Cloudflare Timeout Issues
-
-- **Problem**: Cloudflare has a 100-second timeout limit for requests on non-Enterprise plans, causing 524 errors for long-running inference operations.
-- **Solution options**:
-  1. Implement a job queue system in the API Gateway
-  2. Use streaming responses
-  3. Optimize inference to complete faster
-
-### DNS and Routing
-
-- **Problem**: Configuring proper DNS records to work with Cloudflare Tunnels.
-- **Solution**: Used a CNAME record for www subdomain pointing to the main domain, and configured the tunnel to route traffic to Nginx.
-
-### Secure Connections
-
-- **Problem**: Setting up SSL/TLS with Cloudflare and Nginx.
-- **Solution**: Used Cloudflare's Full SSL mode, letting Cloudflare handle the certificates while traffic between Cloudflare and the origin remained encrypted via the tunnel.
-
-## Future Improvements
-
-1. Implement a job queue system for handling long-running inference requests
-2. Set up monitoring for the services
-3. Add deployment automation
-4. Implement caching for common requests
-5. Set up automatic backups
-
-
-# AI Chat App Deployment Guide
-
-This guide documents the process of deploying an AI Chat application using Next.js, FastAPI, and Cloudflare Tunnel.
-
-## Architecture Overview
-
-```
-[Internet] → [Cloudflare] → [Cloudflare Tunnel] → [Nginx] → [Services]
-                                                      ├─ [Next.js Frontend (port 3000)]
-                                                      └─ [FastAPI Backend (port 8000)]
-```
-
-## Prerequisites
-
-- Domain registered (bartstolarek.com in this example)
-- Cloudflare account with domain added
-- Server running Debian/Ubuntu
-- Docker installed for running services
-
-## Step 1: Domain and DNS Setup
-
-1. Register your domain (e.g., with Namecheap)
-2. Add your domain to Cloudflare
-3. Update nameservers at your registrar to point to Cloudflare's nameservers:
-   - keira.ns.cloudflare.com
-   - ryan.ns.cloudflare.com
-
-## Step 2: Configure Cloudflare DNS
-
-In the Cloudflare dashboard:
-
-1. Go to DNS section
-2. Set up CNAME records pointing to your Cloudflare Tunnel:
-   - Type: CNAME, Name: @, Target: [tunnel-id].cfargotunnel.com, Proxied: Yes
-   - Type: CNAME, Name: www, Target: [tunnel-id].cfargotunnel.com, Proxied: Yes
-
-## Step 3: Install and Configure Nginx
-
-```bash
-# Install Nginx
-sudo apt update
-sudo apt install nginx
-
-# Create a configuration file
-sudo nano /etc/nginx/sites-available/yourdomainname.conf
-```
-
-Add this configuration:
-
+#### API Configuration (`/etc/nginx/sites-available/staging-api.munera.app.conf`)
 ```nginx
 server {
     listen 80;
-    server_name yourdomain.com www.yourdomain.com;
-    
-    # Frontend (Next.js)
+    listen 443 ssl http2;
+    server_name staging-api.munera.app;
+
+    # SSL Configuration
+    ssl_certificate /etc/ssl/cloudflare/munera.app.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/munera.app.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Debug header
+    add_header X-Server-Name "staging-api.munera.app" always;
+
+    # Proxy settings
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:8010;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -508,232 +84,326 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+        proxy_cache_bypass $http_upgrade;
     }
-    
-    # API (FastAPI)
-    location /api/ {
-        proxy_pass http://localhost:8000;
+}
+```
+
+#### Frontend Configuration (`/etc/nginx/sites-available/staging.munera.app.conf`)
+```nginx
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name staging.munera.app;
+
+    ssl_certificate /etc/ssl/cloudflare/munera.app.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/munera.app.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    add_header X-Server-Name "staging.munera.app" always;
+
+    location / {
+        proxy_pass http://localhost:3010;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_read_timeout 300s;
+        proxy_cache_bypass $http_upgrade;
     }
 }
 ```
 
-Enable the configuration:
+### Production Server (Auros Server)
 
-```bash
-# Create symlink
-sudo ln -s /etc/nginx/sites-available/yourdomainname.conf /etc/nginx/sites-enabled/
+#### API Configuration (`/etc/nginx/sites-available/api.munera.app.conf`)
+```nginx
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name api.munera.app;
 
-# Remove default config (if it exists)
-sudo rm /etc/nginx/sites-enabled/default
+    ssl_certificate /etc/ssl/cloudflare/munera.app.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/munera.app.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
-# Test configuration
-sudo nginx -t
+    add_header X-Server-Name "api.munera.app" always;
 
-# Restart Nginx
-sudo systemctl restart nginx
+    location / {
+        proxy_pass http://localhost:8000;
+        # Same proxy headers as staging
+    }
+}
 ```
 
-## Step 4: Install and Configure Cloudflared
+#### Frontend Configuration (`/etc/nginx/sites-available/munera.app.conf`)
+```nginx
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name munera.app www.munera.app;
 
-```bash
-# Download and install cloudflared
-curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-sudo dpkg -i cloudflared.deb
+    ssl_certificate /etc/ssl/cloudflare/munera.app.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/munera.app.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
-# Authenticate with Cloudflare
-cloudflared login
+    add_header X-Server-Name "munera.app" always;
 
-# Create a tunnel
-cloudflared tunnel create your-tunnel-name
-
-# This will output a tunnel ID that you'll need for the next steps
+    location / {
+        proxy_pass http://localhost:3010;
+        # Same proxy headers as staging
+    }
+}
 ```
 
-## Step 5: Configure Cloudflare Tunnel
+## Cloudflare Tunnel Configuration
 
-```bash
-# Create configuration directory
-sudo mkdir -p /etc/cloudflared
-
-# Create config file
-sudo nano /etc/cloudflared/config.yml
-```
-
-Add this configuration:
-
+### Staging Server (`/etc/cloudflared/config.yml`)
 ```yaml
-tunnel: your-tunnel-id
-credentials-file: /home/yourusername/.cloudflared/your-tunnel-id.json
+tunnel: eeec6f03-16cf-421d-a885-02d5071469fc
+credentials-file: /home/largelingo/.cloudflared/eeec6f03-16cf-421d-a885-02d5071469fc.json
+
 ingress:
-  - hostname: yourdomain.com
+  - hostname: bartstolarek.com
     service: http://localhost:80
-  - hostname: www.yourdomain.com
+  - hostname: www.bartstolarek.com
+    service: http://localhost:80
+  - hostname: warren.bartstolarek.com
+    service: http://localhost:80
+  - hostname: carbie.app
+    service: http://localhost:80
+  - hostname: staging.munera.app
+    service: http://localhost:80
+  - hostname: staging-api.munera.app
     service: http://localhost:80
   - service: http_status:404
 ```
 
-## Step 6: Set Up Cloudflare Tunnel as a Service
+### Production Server (`/etc/cloudflared/config.yml`)
+```yaml
+tunnel: 7800be99-6cfa-4025-958a-80a6f32e7aa6
+credentials-file: /home/bart/.cloudflared/7800be99-6cfa-4025-958a-80a6f32e7aa6.json
 
+ingress:
+  - hostname: test.bartstolarek.com
+    service: http://localhost:80
+  - hostname: munera.app
+    service: http://localhost:80
+  - hostname: www.munera.app
+    service: http://localhost:80
+  - hostname: api.munera.app
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+## Docker Container Configuration
+
+### Staging Server Containers
+
+| Container | Name | Port Mapping | Internal Port | Host Port |
+|-----------|------|--------------|---------------|-----------|
+| Backend | munera_backend_staging | 8010:8000 | 8000 | 8010 |
+| Frontend | munera_frontend_staging | 3010:3010 | 3010 | 3010 |
+| Database | munera_postgres_staging | 5433:5432 | 5432 | 5433 |
+
+### Production Server Containers
+
+| Container | Name | Port Mapping | Internal Port | Host Port |
+|-----------|------|--------------|---------------|-----------|
+| Backend | munera_backend_prod | 8000:8000 | 8000 | 8000 |
+| Frontend | munera_frontend_prod | 3010:3010 | 3010 | 3010 |
+
+## Environment Configuration
+
+### Staging Backend (`.env.staging`)
+```env
+ENVIRONMENT=staging
+PORT=8010
+DATABASE_URL=postgresql://postgres:password@postgres:5432/munera_db
+FRONTEND_URL=https://staging.munera.app
+BACKEND_URL=https://staging-api.munera.app
+STRAVA_CLIENT_ID=158320
+STRAVA_CLIENT_SECRET=[secret]
+STRAVA_WEBHOOK_VERIFY_TOKEN=[token]
+```
+
+### Staging Frontend (`.env.staging`)
+```env
+NEXT_PUBLIC_ENVIRONMENT=staging
+PORT=3010
+NEXT_PUBLIC_API_URL=https://staging-api.munera.app
+```
+
+## Cloudflare Settings
+
+- **SSL/TLS Mode**: Full
+- **Always Use HTTPS**: Enabled
+- **Minimum TLS Version**: TLS 1.0
+
+### Page Rules
+
+| URL Pattern | Settings |
+|------------|----------|
+| `staging-api.munera.app/*` | Cache Level: Bypass, Browser Cache TTL: Respect Existing Headers |
+| `api.munera.app/*` | Cache Level: Bypass, Browser Cache TTL: Respect Existing Headers |
+
+## Strava Webhook Endpoints
+
+- **Staging**: https://staging-api.munera.app/webhooks/strava
+- **Production**: https://api.munera.app/webhooks/strava
+
+## Deployment Commands
+
+### SSL Certificate Setup
 ```bash
-# Install as a service
-sudo cloudflared service install
+# Create directory
+sudo mkdir -p /etc/ssl/cloudflare
 
-# Start and enable the service
-sudo systemctl start cloudflared
-sudo systemctl enable cloudflared
+# Add certificate and key
+sudo nano /etc/ssl/cloudflare/munera.app.pem
+sudo nano /etc/ssl/cloudflare/munera.app.key
+
+# Set permissions
+sudo chmod 600 /etc/ssl/cloudflare/munera.app.key
+sudo chmod 644 /etc/ssl/cloudflare/munera.app.pem
+```
+
+### Nginx Configuration
+```bash
+# Create configuration files
+sudo nano /etc/nginx/sites-available/staging-api.munera.app.conf
+sudo nano /etc/nginx/sites-available/staging.munera.app.conf
+
+# Enable sites
+sudo ln -s /etc/nginx/sites-available/staging-api.munera.app.conf /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/staging.munera.app.conf /etc/nginx/sites-enabled/
+
+# Test and reload
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### Cloudflare Tunnel Management
+```bash
+# Restart tunnel
+sudo systemctl restart cloudflared
 
 # Check status
 sudo systemctl status cloudflared
+
+# View logs
+sudo journalctl -u cloudflared -f
 ```
 
-## Step 7: Configure Cloudflare SSL/TLS Settings
+## Testing and Verification
 
-In the Cloudflare dashboard:
-
-1. Go to SSL/TLS section
-2. Set SSL/TLS encryption mode to "Full"
-3. Enable "Always Use HTTPS"
-
-## Step 8: Set Up Page Rules (Optional)
-
-In the Cloudflare dashboard:
-
-1. Go to Rules → Page Rules
-2. Add a rule for `yourdomain.com/api/*`
-3. Set "Cache Level" to "Bypass" to prevent caching API responses
-4. Save and Deploy
-
-## Step 9: Deploy Your Services
-
-### Frontend (Next.js)
-
-Using Docker:
-
+### Quick Health Checks
 ```bash
-# Docker Compose example
-services:
-  frontend:
-    build: ./frontend
-    container_name: frontend
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
+# Test DNS resolution
+nslookup staging-api.munera.app
+
+# Test SSL handshake
+openssl s_client -connect staging-api.munera.app:443 -servername staging-api.munera.app < /dev/null
+
+# Test API endpoint
+curl -I https://staging-api.munera.app/docs
+
+# Test frontend
+curl -I https://staging.munera.app
 ```
 
-### Backend (FastAPI)
+### Verification Checklist
+- [ ] DNS resolves correctly to Cloudflare IPs
+- [ ] SSL certificate is valid and covers all domains
+- [ ] API documentation loads at `/docs`
+- [ ] Frontend connects to API successfully
+- [ ] Strava webhooks are received and processed
+- [ ] Database connections are working
 
-Using Docker:
+## Troubleshooting
 
-```bash
-# Docker Compose example
-services:
-  backend:
-    build: ./backend
-    container_name: backend
-    ports:
-      - "8000:8000"
-    restart: unless-stopped
-```
+### Common Issues
 
-## Step 10: Testing and Troubleshooting
+#### SSL Handshake Failures
+- **Issue**: ERR_SSL_VERSION_OR_CIPHER_MISMATCH on sub-subdomains
+- **Solution**: Use single-level subdomains (e.g., `staging-api` instead of `api.staging`)
 
-### Verify Services
-
-```bash
-# Check if frontend is accessible
-curl http://localhost:3000
-
-# Check if backend is accessible
-curl http://localhost:8000/api/v1/health/
-
-# Check if Nginx is correctly proxying requests
-curl http://localhost/
-curl http://localhost/api/v1/health/
-
-# Check Cloudflare Tunnel status
-cloudflared tunnel list
-```
-
-### Common Issues and Solutions
+#### Port Mapping Confusion
+- **Remember**: Docker internal port != Host port
+- **Staging Backend**: Container listens on 8000, mapped to host 8010
+- **Production Backend**: Container listens on 8000, mapped to host 8000
 
 #### Nginx Configuration Conflicts
-
-If you see "conflicting server name" errors:
-
 ```bash
-# List all configurations
-grep -r "server_name" /etc/nginx/sites-available/
+# Check for conflicts
 grep -r "server_name" /etc/nginx/sites-enabled/
 
-# Remove conflicting configurations
+# Remove duplicates
 sudo rm /etc/nginx/sites-enabled/conflicting-config
-
-# Keep only one configuration per domain
 ```
 
-#### Cloudflare Tunnel Connection Issues
-
-If you see "Application error 0x0 (remote)" errors:
-
-1. Check if your services are running and accessible locally
-2. Ensure Nginx is correctly proxying to your services
-3. Verify SSL/TLS settings in Cloudflare (set to "Full")
-4. Try disabling HTTP/2 in Cloudflare Network settings
-5. Create a Page Rule to bypass cache for API endpoints
-
-#### DNS Record Conflicts
-
-If you see errors when adding DNS records:
-
-1. Check existing DNS records in Cloudflare dashboard
-2. Delete any A records pointing to your server IP
-3. Create CNAME records pointing to your tunnel
-
-## Maintenance and Updates
-
-### Updating Cloudflared
-
+#### Cloudflare Tunnel Issues
 ```bash
-# Download latest version
+# Check tunnel connections
+cloudflared tunnel list
+
+# Restart tunnel service
+sudo systemctl restart cloudflared
+
+# Check logs for errors
+sudo journalctl -u cloudflared -n 50
+```
+
+## Historical Issues and Resolutions
+
+### Domain Restructuring (September 2025)
+- **Problem**: `api.staging.munera.app` (sub-subdomain) experienced SSL handshake failures with Cloudflare
+- **Root Cause**: Cloudflare edge servers handle sub-subdomains differently during SSL negotiation
+- **Solution**: Restructured to `staging-api.munera.app` (single-level subdomain)
+- **Result**: SSL handshake issues resolved, all endpoints working correctly
+
+## Maintenance Notes
+
+### Regular Tasks
+1. Monitor SSL certificate expiration (15-year validity)
+2. Keep Cloudflare tunnel updated
+3. Review and rotate API keys and secrets
+4. Monitor Docker container logs for errors
+5. Check Nginx access and error logs
+
+### Update Procedures
+```bash
+# Update Cloudflared
 curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-
-# Install the update
 sudo dpkg -i cloudflared.deb
-
-# Restart the service
 sudo systemctl restart cloudflared
-```
 
-### Restarting Services
-
-```bash
-# Restart Nginx
+# Restart all services
 sudo systemctl restart nginx
-
-# Restart Cloudflared
 sudo systemctl restart cloudflared
-
-# Restart Docker containers
 docker-compose restart
 ```
 
 ## Security Considerations
 
-1. Use strong passwords for all services
-2. Keep all software updated
-3. Consider implementing rate limiting in Nginx
-4. Use environment variables for sensitive configuration
-5. Implement proper authentication for your API endpoints
+1. SSL certificates use Cloudflare Origin Certificates (15-year validity)
+2. All traffic proxied through Cloudflare for DDoS protection
+3. Sensitive environment variables stored in `.env` files with 600 permissions
+4. API endpoints use CORS configuration appropriate for production
+5. Database credentials isolated per environment
 
-## Resources
+## Contact and Resources
 
-- [Cloudflare Tunnels Documentation](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
-- [Nginx Documentation](https://nginx.org/en/docs/)
-- [Docker Documentation](https://docs.docker.com/)
+- **Cloudflare Dashboard**: https://dash.cloudflare.com
+- **Strava App Settings**: https://www.strava.com/settings/api
+- **Server Access**: SSH to respective servers (XPS for staging, Auros for production)
+
+---
+
+*Last Updated: September 2025*
+*Document Version: 2.0 - Post domain restructuring*
